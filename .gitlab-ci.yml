@@ -1,0 +1,146 @@
+stages:
+  - test
+  - build
+  - version
+  - release
+  - deployment
+  
+# include:
+#   - local: /.gitlab/_common.gitlab-ci.yml
+#   - local: /.gitlab/test.gitlab-ci.yml
+#   - local: /.gitlab/devbuild.gitlab-ci.yml
+#   - local: /.gitlab/prodbuild.gitlab-ci.yml
+
+image:
+  name: sonarsource/sonar-scanner-cli:latest
+  entrypoint: [""]
+  
+variables:
+  IMAGE_NAME: "001078914552.dkr.ecr.us-west-2.amazonaws.com/zscryptoservice"
+  SONAR_TOKEN: "c432b7525eb470e8454cfbad61e96a639319fb5f"
+  SONAR_HOST_URL: "http://44.228.131.240:9000/"
+  GIT_DEPTH: 0
+  ZS_DEV_TAG: "dev_test"
+  ZS_MASTER_BRANCH: "master"
+
+Sonarqube-check:
+  stage: test
+  allow_failure: true
+  only:
+    refs:
+      - merge_requests
+  script:
+    - sonar-scanner -Dsonar.qualitygate.wait=true
+
+Dev_build_service:
+  stage: build
+  only:
+    refs:
+      - branches
+    variables:
+      - $CI_COMMIT_REF_NAME == $CI_DEFAULT_BRANCH
+  script:
+    - 'go build -o main'
+  tags:
+    - test-tag
+
+Dev_release:
+  stage: release
+  only:
+    refs:
+      - branches
+    variables:
+      - $CI_COMMIT_REF_NAME == $CI_DEFAULT_BRANCH
+  variables:
+    GIT_STRATEGY: none
+  script:
+    - 'cd $CI_PROJECT_DIR'
+    - 'docker build -t $IMAGE_NAME:$ZS_DEV_TAG .'
+    - aws ecr get-login-password --region us-west-2 | docker login --username AWS --password-stdin 001078914552.dkr.ecr.us-west-2.amazonaws.com
+    - 'docker push $IMAGE_NAME:$ZS_DEV_TAG'
+  tags:
+    - test-tag
+
+Dev_deployment:
+  stage: deployment
+  only:
+    refs:
+      - branches
+    variables:
+      - $CI_COMMIT_REF_NAME == $CI_DEFAULT_BRANCH
+  variables:
+    GIT_STRATEGY: none
+  script:
+    - 'cd ~'
+    - "ssh -i nandika_keypair.pem -o StrictHostKeyChecking=no nandika@44.229.14.184 'sudo -Sv <<< \"abcd@1234\" && bash -s' < run-dev-cryptoService.sh"
+
+Build_service:
+  stage: build
+  only:
+    refs:
+      - branches
+    variables:
+      - $CI_COMMIT_REF_NAME == $ZS_MASTER_BRANCH
+  script:
+    - 'go build -o main'
+  tags:
+    - test-tag
+
+Version:
+  stage: version
+  only:
+    refs:
+      - branches
+    variables:
+      - $CI_COMMIT_REF_NAME == $ZS_MASTER_BRANCH
+  variables:
+    GIT_STRATEGY: none
+  script:
+    - TAG=$(git describe --tags --always)
+    - echo "export TAG=$TAG" > .variables
+    - echo "export IMAGE=$IMAGE_NAME:$TAG" >> .variables
+    - cat .variables
+    - 'python3 /home/nandika/version_update.py'
+    - NEWTAG=$(git describe --tags --always)
+    - 'readarray -d - -t NEWTAGARR <<<"$NEWTAG"'
+    - echo "export NEWTAGNAME=${NEWTAGARR[0]}" >> .variables
+  artifacts:
+    paths:
+    - .variables
+
+Release:
+  stage: release
+  only:
+    refs:
+      - branches
+    variables:
+      - $CI_COMMIT_REF_NAME == $ZS_MASTER_BRANCH
+  before_script:
+    - source .variables
+  variables:
+    GIT_STRATEGY: none
+  script:
+    - 'cat .variables'
+    - 'echo $CI_PROJECT_DIR'
+    - 'cd $CI_PROJECT_DIR'
+    - 'docker build -t $IMAGE_NAME:$NEWTAGNAME .'
+    - aws ecr get-login-password --region us-west-2 | docker login --username AWS --password-stdin 001078914552.dkr.ecr.us-west-2.amazonaws.com
+    # - $(aws ecr get-login-password --no-include-email --region us-east-2)
+    - 'docker push $IMAGE_NAME:$NEWTAGNAME'
+    - 'docker tag $IMAGE_NAME:$NEWTAGNAME $IMAGE_NAME:latest'
+    - 'docker push $IMAGE_NAME:latest'
+  tags:
+    - test-tag
+
+# remove this if the deployment is done manually
+Deployment:
+  stage: deployment
+  only:
+    refs:
+      - branches
+    variables:
+      - $CI_COMMIT_REF_NAME == $ZS_MASTER_BRANCH
+  variables:
+    GIT_STRATEGY: none
+  script:
+    - aws ecs update-service --cluster DevTest --service zscryptoservice --force-new-deployment

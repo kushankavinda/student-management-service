@@ -1,0 +1,2 @@
+(1) How to run docker
+docker run -d  -e DBUSER='kushan' -e DBPW='asdf@1234' -e DBHOST='34.211.94.118' -e DBPORT='3306' -e DBNAME='otpUsers' -e HSM_HOST='34.213.186.128' -e HSM_PORT='8200' -e HARSHI_VAULT_ROOT_TOKEN='s.SiZjHkW1CsU2CZotlolLhM2v' -e PUSH_URL='http://zswebnotificationlocal.entrusttitle.net/api/v1/Notification/SendBiometricVerificationPushNotification' -p 5000:5000 001078914552.dkr.ecr.us-west-2.amazonaws.com/zscryptoservice:10.0.0
